@@ -17,40 +17,43 @@ const DEFAULT_OUTPUT_NAME = "generated_image";
 const DEFAULT_ASPECT = "1:1";
 const DEFAULT_SIZE = "1K";
 const DEFAULT_NUM_IMAGES = 1;
-const DEFAULT_PERSON = "allow_adult";
+const MAX_NUM_IMAGES = 4;
 
-const SUPPORTED_MODELS = [
+// Gemini image models accept any ID here; this list only feeds --help.
+const KNOWN_MODELS = [
   "gemini-3.1-flash-image-preview",
+  "gemini-3.1-flash-image",
   "gemini-3-pro-image-preview",
+  "gemini-3-pro-image",
+  "gemini-3.1-flash-lite-image",
+  "gemini-nano-banana-2.1",
   "gemini-2.5-flash-image",
-  "imagen-4.0-generate-001",
 ];
 
-const SUPPORTED_PERSON_POLICIES = ["dont_allow", "allow_adult", "allow_all"];
-
 function printUsage() {
-  console.log(`Generate images using Gemini/Imagen API.
+  console.log(`Generate images with Gemini image models (Nano Banana).
 
 Usage:
   node scripts/generate_image.js "A futuristic city at sunset"
-  node scripts/generate_image.js "Robot with skateboard" --model imagen-4.0-generate-001
-  node scripts/generate_image.js "Mountain landscape" --aspect 16:9 --size 2K
+  node scripts/generate_image.js "Robot with skateboard" --aspect 16:9 --size 2K
   node scripts/generate_image.js "Portrait" --num 4 --output-dir ./my-images/ --name portrait
   node scripts/generate_image.js "Custom folder" --no-timestamp
 
 Options:
   --model, -m         Model ID (default: ${DEFAULT_MODEL})
+                      Known models: ${KNOWN_MODELS.join(", ")}
   --output-dir, -o    Output directory (default: ${DEFAULT_OUTPUT_DIR})
   --name, -n          Base output filename (default: ${DEFAULT_OUTPUT_NAME})
   --no-timestamp      Disable timestamp suffix in filename
   --aspect, -a        Aspect ratio (default: ${DEFAULT_ASPECT})
   --size, -s          Image size (default: ${DEFAULT_SIZE})
-  --num               Number of images to generate (1-4, default: ${DEFAULT_NUM_IMAGES})
-  --person            Person policy: dont_allow | allow_adult | allow_all (default: ${DEFAULT_PERSON})
+  --num               Number of images (1-${MAX_NUM_IMAGES}, default: ${DEFAULT_NUM_IMAGES}).
+                      Image models return one image per request, so this sends
+                      --num requests.
   --help, -h          Show this help message
 
 Requirements:
-  npm install @google/genai@latest dotenv@latest
+  npm install
 `);
 }
 
@@ -114,42 +117,13 @@ async function generateImage({
   aspectRatio = DEFAULT_ASPECT,
   imageSize = DEFAULT_SIZE,
   numImages = DEFAULT_NUM_IMAGES,
-  personGeneration = DEFAULT_PERSON,
   useTimestamp = true,
 }) {
   const ai = new GoogleGenAI({ apiKey: getApiKey() });
-
   await mkdir(outputDir, { recursive: true });
-  const savedFiles = [];
-  const baseFilename = getBaseFilename(outputName, useTimestamp);
 
-  if (model.startsWith("imagen")) {
-    const response = await ai.models.generateImages({
-      model,
-      prompt,
-      config: {
-        numberOfImages: numImages,
-        aspectRatio,
-        imageSize,
-        personGeneration,
-      },
-    });
-
-    for (const [index, generatedImage] of (response.generatedImages || []).entries()) {
-      const imageBytes = decodeImageBytes(generatedImage?.image?.imageBytes);
-      if (!imageBytes) {
-        continue;
-      }
-
-      const suffix = numImages > 1 ? `_${index}` : "";
-      const filePath = await saveImage(outputDir, baseFilename, imageBytes, suffix);
-      savedFiles.push(filePath);
-    }
-
-    return savedFiles;
-  }
-
-  if (model.startsWith("gemini")) {
+  const images = [];
+  for (let index = 0; index < numImages; index += 1) {
     const response = await ai.models.generateContent({
       model,
       contents: prompt,
@@ -163,21 +137,29 @@ async function generateImage({
     });
 
     const parts = response.candidates?.[0]?.content?.parts || [];
-    for (const [index, part] of parts.entries()) {
+    for (const part of parts) {
       const imageBytes = decodeImageBytes(part?.inlineData?.data);
-      if (!imageBytes) {
-        continue;
+      if (imageBytes) {
+        images.push(imageBytes);
       }
-
-      const suffix = parts.length > 1 ? `_${index}` : "";
-      const filePath = await saveImage(outputDir, baseFilename, imageBytes, suffix);
-      savedFiles.push(filePath);
     }
 
-    return savedFiles;
+    if (images.length === index) {
+      const detail = (response.text || "").trim();
+      throw new Error(
+        `No image returned by ${model}${detail ? ` (model said: ${detail})` : ""}. Check that the model ID is an image model.`,
+      );
+    }
   }
 
-  throw new Error(`Unknown model ${model}`);
+  const baseFilename = getBaseFilename(outputName, useTimestamp);
+  const savedFiles = [];
+  for (const [index, imageBytes] of images.entries()) {
+    const suffix = images.length > 1 ? `_${index}` : "";
+    savedFiles.push(await saveImage(outputDir, baseFilename, imageBytes, suffix));
+  }
+
+  return savedFiles;
 }
 
 function parseCli() {
@@ -190,7 +172,6 @@ function parseCli() {
       aspect: { type: "string", short: "a", default: DEFAULT_ASPECT },
       size: { type: "string", short: "s", default: DEFAULT_SIZE },
       num: { type: "string", default: String(DEFAULT_NUM_IMAGES) },
-      person: { type: "string", default: DEFAULT_PERSON },
       help: { type: "boolean", short: "h", default: false },
     },
     allowPositionals: true,
@@ -206,32 +187,25 @@ function parseCli() {
     process.exit(1);
   }
 
-  const prompt = positionals.join(" ");
   const numImages = Number(values.num);
-
-  if (Number.isNaN(numImages) || numImages < 1 || numImages > 4) {
-    throw new Error("--num must be an integer between 1 and 4");
+  if (!Number.isInteger(numImages) || numImages < 1 || numImages > MAX_NUM_IMAGES) {
+    throw new Error(`--num must be an integer between 1 and ${MAX_NUM_IMAGES}`);
   }
 
-  if (!SUPPORTED_MODELS.includes(values.model)) {
-    throw new Error(`Unsupported model '${values.model}'. Use one of: ${SUPPORTED_MODELS.join(", ")}`);
-  }
-
-  if (!SUPPORTED_PERSON_POLICIES.includes(values.person)) {
+  if (values.name !== path.basename(values.name)) {
     throw new Error(
-      `Unsupported --person '${values.person}'. Use one of: ${SUPPORTED_PERSON_POLICIES.join(", ")}`,
+      `--name takes a file name, not a path (got "${values.name}"); use --output-dir for the directory`,
     );
   }
 
   return {
-    prompt,
+    prompt: positionals.join(" "),
     model: values.model,
     outputDir: values["output-dir"],
     outputName: values.name,
     aspectRatio: values.aspect,
     imageSize: values.size,
     numImages,
-    personGeneration: values.person,
     useTimestamp: !values["no-timestamp"],
   };
 }

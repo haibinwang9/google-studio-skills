@@ -1,19 +1,17 @@
 # Google AI Agent Skills
 
-Agent Skills for Google AI services. These skills teach AI agents (Claude Code, Gemini CLI, Cursor, OpenCode, etc.) how to use Google's Gemini API effectively.
+Agent Skills for Google AI. These skills teach AI agents (Claude Code, Gemini CLI, Cursor, OpenCode, etc.) how to generate **images** and **speech** with Google's Gemini API.
 
 Built following the [Agent Skills](https://agentskills.io) open standard.
 
 ## Available Skills
 
-| Skill               | Description                          |
-| ------------------- | ------------------------------------ |
-| `gemini-text`       | Text generation with Gemini models   |
-| `gemini-image`      | Image generation with Gemini/Imagen  |
-| `gemini-tts`        | Text-to-speech synthesis             |
-| `gemini-batch`      | Batch processing for large workloads |
-| `gemini-embeddings` | Text embeddings for semantic search  |
-| `gemini-files`      | File upload to Gemini Files API      |
+Everything ships as one skill, `skills/gemini/`. `SKILL.md` is a short routing index; each capability's details live in `references/` and load only when needed.
+
+| Capability | Script | Reference |
+| ---------- | ------ | --------- |
+| Image generation (Nano Banana / Gemini image models) | `scripts/generate_image.js` | `references/image.md` |
+| Text-to-speech (single and multi-speaker) | `scripts/tts.js` | `references/tts.md` (voices: `references/tts-voices.md`) |
 
 ## Setup
 
@@ -27,7 +25,8 @@ Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
 export GEMINI_API_KEY="your-api-key"
 ```
 
-Or create a `.env` file:
+`GOOGLE_API_KEY` works too. A `.env` file is also read, but only from the directory you run the script in:
+
 ```
 GEMINI_API_KEY=your-api-key
 ```
@@ -35,7 +34,7 @@ GEMINI_API_KEY=your-api-key
 ### 3. Install SDK
 
 ```bash
-npm install @google/genai@latest dotenv@latest
+cd skills/gemini/scripts && npm install
 ```
 
 ## Usage with AI Agents
@@ -45,11 +44,11 @@ npm install @google/genai@latest dotenv@latest
 The easiest way to use these skills is via the [Skills CLI](https://skills.sh). It automatically installs skills into your `.agent/skills` directory for discovery by agents like Claude Code or Gemini CLI.
 
 ```bash
-# Install a specific skill
-npx skills add https://github.com/akrindev/google-studio-skills/tree/main/skills/gemini-text
+# Install the skill
+npx skills add https://github.com/haibinwang9/google-studio-skills/tree/main/skills/gemini
 
-# Install the entire collection
-npx skills add akrindev/google-studio-skills
+# Or point the CLI at the repository
+npx skills add haibinwang9/google-studio-skills
 ```
 
 ### 2. ClawdHub & Moltbot
@@ -71,12 +70,12 @@ moltbot onboard
 clawdhub search gemini
 
 # Install a skill to your workspace (~/molt/skills/)
-clawdhub install gemini-text --workdir ~/molt
+clawdhub install gemini --workdir ~/molt
 ```
 
 **Running Skills:**
 Once installed, interact with Moltbot via the terminal or connected chat apps (WhatsApp/Telegram). Simply ask:
-> "Molt, use the gemini-text skill to summarize this document."
+> "Molt, use the gemini skill to make an image of a red cube."
 
 ### 3. Manual Installation (Claude Code / Gemini CLI / OpenCode)
 
@@ -84,7 +83,7 @@ These agents automatically discover skills in `skills/` directories. You can man
 
 ```bash
 # Clone the repository
-git clone https://github.com/akrindev/google-studio-skills.git
+git clone https://github.com/haibinwang9/google-studio-skills.git
 
 # Navigate to your project and the agent will discover skills in the adjacent folder
 # or add the path to your agent's configuration
@@ -96,59 +95,52 @@ Browse the full directory of available skills and see community rankings at [ski
 
 ### Manual Usage
 
-Each skill contains standalone JavaScript scripts that can be run directly:
+Run the scripts from the skill root; install dependencies once with `cd skills/gemini/scripts && npm install`.
 
 ```bash
-# Text generation
-node skills/gemini-text/scripts/generate.js "Explain quantum computing"
-
 # Image generation
-node skills/gemini-image/scripts/generate_image.js "A sunset over mountains"
+node scripts/generate_image.js "A sunset over mountains" --aspect 16:9 --size 2K
 
 # Text-to-speech
-node skills/gemini-tts/scripts/tts.js "Hello world" --voice Kore
-
-# Embeddings
-node skills/gemini-embeddings/scripts/embed.js "semantic search query"
+node scripts/tts.js "Hello world" --voice Kore
 ```
 
-## Default Models (January 2026)
+Both scripts write timestamped files by default (`images/`, `audio/`). `--output-dir` sets the directory, `--no-timestamp` drops the timestamp, and `--help` lists every flag.
+
+## Default Models
 
 | Capability | Default Model                  | Notes                     |
 | ---------- | ------------------------------ | ------------------------- |
-| Text       | `gemini-3-flash-preview`       | Fast, agentic, multimodal |
 | Image      | `gemini-3.1-flash-image-preview` | Nano Banana 2 default (up to 4K) |
-| TTS        | `gemini-2.5-flash-preview-tts` | Multiple voices           |
-| Embeddings | `gemini-embedding-001`         | 3072 dimensions           |
+| TTS        | `gemini-3.8-flash-tts`         | 30 prebuilt voices, multi-speaker |
+
+Defaults change often. Check `references/image.md` and `references/tts.md` for the current list before quoting a model name.
 
 ## Skill Structure
 
-Each skill follows the Agent Skills specification:
+The skill follows the Agent Skills specification:
 
 ```
-skills/gemini-text/
-├── SKILL.md           # Instructions for AI agents
-├── scripts/           # Executable JavaScript scripts
-│   └── generate.js
-└── references/        # Additional documentation
-    └── models.md
+skills/gemini/
+├── SKILL.md           # Routing index for AI agents
+├── scripts/           # Executable JavaScript scripts (shared package.json)
+│   ├── generate_image.js
+│   └── tts.js
+└── references/        # One file per capability, loaded on demand
+    ├── image.md
+    ├── tts.md
+    └── tts-voices.md
 ```
 
 ## Development
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Install dependencies for the scripts
+cd skills/gemini/scripts && npm install
 
-# Install dependencies for a skill script
-cd skills/gemini-text/scripts && npm install
-
-# Format code
-ruff format skills/
-
-# Lint code
-ruff check skills/
+# Check the scripts load and print usage
+node scripts/generate_image.js --help
+node scripts/tts.js --help
 ```
 
 ## License
